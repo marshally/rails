@@ -4,7 +4,10 @@ require 'models/project'
 require 'models/company'
 require 'models/ship'
 require 'models/pirate'
+require 'models/car'
 require 'models/bulb'
+require 'models/author'
+require 'models/post'
 
 class HasOneAssociationsTest < ActiveRecord::TestCase
   self.use_transactional_fixtures = false unless supports_savepoints?
@@ -19,18 +22,25 @@ class HasOneAssociationsTest < ActiveRecord::TestCase
     assert_equal Account.find(1).credit_limit, companies(:first_firm).account.credit_limit
   end
 
+  def test_has_one_does_not_use_order_by
+    ActiveRecord::SQLCounter.clear_log
+    companies(:first_firm).account
+  ensure
+    assert ActiveRecord::SQLCounter.log_all.all? { |sql| /order by/i !~ sql }, 'ORDER BY was used in the query'
+  end
+
   def test_has_one_cache_nils
     firm = companies(:another_firm)
     assert_queries(1) { assert_nil firm.account }
     assert_queries(0) { assert_nil firm.account }
 
-    firms = Firm.find(:all, :include => :account)
+    firms = Firm.all.merge!(:includes => :account).to_a
     assert_queries(0) { firms.each(&:account) }
   end
 
   def test_with_select
     assert_equal Firm.find(1).account_with_select.attributes.size, 2
-    assert_equal Firm.find(1, :include => :account_with_select).account_with_select.attributes.size, 2
+    assert_equal Firm.all.merge!(:includes => :account_with_select).find(1).account_with_select.attributes.size, 2
   end
 
   def test_finding_using_primary_key
@@ -95,6 +105,15 @@ class HasOneAssociationsTest < ActiveRecord::TestCase
     assert_nil Account.find(old_account_id).firm_id
   end
 
+  def test_natural_assignment_to_nil_after_destroy
+    firm = companies(:rails_core)
+    old_account_id = firm.account.id
+    firm.account.destroy
+    firm.account = nil
+    assert_nil companies(:rails_core).account
+    assert_raise(ActiveRecord::RecordNotFound) { Account.find(old_account_id) }
+  end
+
   def test_association_change_calls_delete
     companies(:first_firm).deletable_account = Account.new(:credit_limit => 5)
     assert_equal [], Account.destroyed_account_ids[companies(:first_firm).id]
@@ -146,12 +165,29 @@ class HasOneAssociationsTest < ActiveRecord::TestCase
     assert_nothing_raised { firm.destroy }
   end
 
-  def test_dependence_with_restrict
-    firm = RestrictedFirm.new(:name => 'restrict')
-    firm.save!
+  def test_restrict_with_exception
+    firm = RestrictedWithExceptionFirm.create!(:name => 'restrict')
     firm.create_account(:credit_limit => 10)
+
     assert_not_nil firm.account
+
     assert_raise(ActiveRecord::DeleteRestrictionError) { firm.destroy }
+    assert RestrictedWithExceptionFirm.exists?(:name => 'restrict')
+    assert firm.account.present?
+  end
+
+  def test_restrict_with_error
+    firm = RestrictedWithErrorFirm.create!(:name => 'restrict')
+    firm.create_account(:credit_limit => 10)
+
+    assert_not_nil firm.account
+
+    firm.destroy
+
+    assert !firm.errors.empty?
+    assert_equal "Cannot delete record because a dependent account exists", firm.errors[:base].first
+    assert RestrictedWithErrorFirm.exists?(:name => 'restrict')
+    assert firm.account.present?
   end
 
   def test_successful_build_association
@@ -163,18 +199,52 @@ class HasOneAssociationsTest < ActiveRecord::TestCase
     assert_equal account, firm.account
   end
 
+  def test_build_association_dont_create_transaction
+    assert_no_queries(ignore_none: false) {
+      Firm.new.build_account
+    }
+  end
+
+  def test_building_the_associated_object_with_implicit_sti_base_class
+    firm = DependentFirm.new
+    company = firm.build_company
+    assert_kind_of Company, company, "Expected #{company.class} to be a Company"
+  end
+
+  def test_building_the_associated_object_with_explicit_sti_base_class
+    firm = DependentFirm.new
+    company = firm.build_company(:type => "Company")
+    assert_kind_of Company, company, "Expected #{company.class} to be a Company"
+  end
+
+  def test_building_the_associated_object_with_sti_subclass
+    firm = DependentFirm.new
+    company = firm.build_company(:type => "Client")
+    assert_kind_of Client, company, "Expected #{company.class} to be a Client"
+  end
+
+  def test_building_the_associated_object_with_an_invalid_type
+    firm = DependentFirm.new
+    assert_raise(ActiveRecord::SubclassNotFound) { firm.build_company(:type => "Invalid") }
+  end
+
+  def test_building_the_associated_object_with_an_unrelated_type
+    firm = DependentFirm.new
+    assert_raise(ActiveRecord::SubclassNotFound) { firm.build_company(:type => "Account") }
+  end
+
   def test_build_and_create_should_not_happen_within_scope
     pirate = pirates(:blackbeard)
-    original_scoped_methods = Bulb.scoped_methods.dup
+    scoped_count = pirate.association(:foo_bulb).scope.where_values.count
 
-    bulb = pirate.build_bulb
-    assert_equal original_scoped_methods, bulb.scoped_methods_after_initialize
+    bulb = pirate.build_foo_bulb
+    assert_not_equal scoped_count, bulb.scope_after_initialize.where_values.count
 
-    bulb = pirate.create_bulb
-    assert_equal original_scoped_methods, bulb.scoped_methods_after_initialize
+    bulb = pirate.create_foo_bulb
+    assert_not_equal scoped_count, bulb.scope_after_initialize.where_values.count
 
-    bulb = pirate.create_bulb!
-    assert_equal original_scoped_methods, bulb.scoped_methods_after_initialize
+    bulb = pirate.create_foo_bulb!
+    assert_not_equal scoped_count, bulb.scope_after_initialize.where_values.count
   end
 
   def test_create_association
@@ -233,13 +303,13 @@ class HasOneAssociationsTest < ActiveRecord::TestCase
 
   def test_dependence_with_missing_association_and_nullify
     Account.destroy_all
-    firm = DependentFirm.find(:first)
+    firm = DependentFirm.first
     assert_nil firm.account
     firm.destroy
   end
 
   def test_finding_with_interpolated_condition
-    firm = Firm.find(:first)
+    firm = Firm.first
     superior = firm.clients.create(:name => 'SuperiorCo')
     superior.rating = 10
     superior.save
@@ -285,14 +355,14 @@ class HasOneAssociationsTest < ActiveRecord::TestCase
 
     assert_nothing_raised do
       Firm.find(@firm.id).save!
-      Firm.find(@firm.id, :include => :account).save!
+      Firm.all.merge!(:includes => :account).find(@firm.id).save!
     end
 
     @firm.account.destroy
 
     assert_nothing_raised do
       Firm.find(@firm.id).save!
-      Firm.find(@firm.id, :include => :account).save!
+      Firm.all.merge!(:includes => :account).find(@firm.id).save!
     end
   end
 
@@ -335,6 +405,17 @@ class HasOneAssociationsTest < ActiveRecord::TestCase
     assert orig_ship.destroyed?
   end
 
+  def test_creation_failure_due_to_new_record_should_raise_error
+    pirate = pirates(:redbeard)
+    new_ship = Ship.new
+
+    assert_raise(ActiveRecord::RecordNotSaved) do
+      pirate.ship = new_ship
+    end
+    assert_nil pirate.ship
+    assert_nil new_ship.pirate_id
+  end
+
   def test_replacement_failure_due_to_existing_record_should_raise_error
     pirate = pirates(:blackbeard)
     pirate.ship.name = nil
@@ -358,5 +439,139 @@ class HasOneAssociationsTest < ActiveRecord::TestCase
     assert_equal pirate.id, pirate.ship.pirate_id
     assert_equal pirate.id, ships(:black_pearl).reload.pirate_id
     assert_nil new_ship.pirate_id
+  end
+
+  def test_association_keys_bypass_attribute_protection
+    car = Car.create(:name => 'honda')
+
+    bulb = car.build_bulb
+    assert_equal car.id, bulb.car_id
+
+    bulb = car.build_bulb :car_id => car.id + 1
+    assert_equal car.id, bulb.car_id
+
+    bulb = car.create_bulb
+    assert_equal car.id, bulb.car_id
+
+    bulb = car.create_bulb :car_id => car.id + 1
+    assert_equal car.id, bulb.car_id
+  end
+
+  def test_association_protect_foreign_key
+    pirate = Pirate.create!(:catchphrase => "Don' botharrr talkin' like one, savvy?")
+
+    ship = pirate.build_ship
+    assert_equal pirate.id, ship.pirate_id
+
+    ship = pirate.build_ship :pirate_id => pirate.id + 1
+    assert_equal pirate.id, ship.pirate_id
+
+    ship = pirate.create_ship
+    assert_equal pirate.id, ship.pirate_id
+
+    ship = pirate.create_ship :pirate_id => pirate.id + 1
+    assert_equal pirate.id, ship.pirate_id
+  end
+
+  def test_build_with_block
+    car = Car.create(:name => 'honda')
+
+    bulb = car.build_bulb{ |b| b.color = 'Red' }
+    assert_equal 'RED!', bulb.color
+  end
+
+  def test_create_with_block
+    car = Car.create(:name => 'honda')
+
+    bulb = car.create_bulb{ |b| b.color = 'Red' }
+    assert_equal 'RED!', bulb.color
+  end
+
+  def test_create_bang_with_block
+    car = Car.create(:name => 'honda')
+
+    bulb = car.create_bulb!{ |b| b.color = 'Red' }
+    assert_equal 'RED!', bulb.color
+  end
+
+  def test_association_attributes_are_available_to_after_initialize
+    car = Car.create(:name => 'honda')
+    bulb = car.create_bulb
+
+    assert_equal car.id, bulb.attributes_after_initialize['car_id']
+  end
+
+  def test_has_one_transaction
+    company = companies(:first_firm)
+    account = Account.find(1)
+
+    company.account # force loading
+    assert_no_queries { company.account = account }
+
+    company.account = nil
+    assert_no_queries { company.account = nil }
+    account = Account.find(2)
+    assert_queries { company.account = account }
+
+    assert_no_queries { Firm.new.account = account }
+  end
+
+  def test_has_one_assignment_dont_trigger_save_on_change_of_same_object
+    pirate = Pirate.create!(catchphrase: "Don' botharrr talkin' like one, savvy?")
+    ship = pirate.build_ship(name: 'old name')
+    ship.save!
+
+    ship.name = 'new name'
+    assert ship.changed?
+    assert_queries(1) do
+      # One query for updating name, not triggering query for updating pirate_id
+      pirate.ship = ship
+    end
+
+    assert_equal 'new name', pirate.ship.reload.name
+  end
+
+  def test_has_one_assignment_triggers_save_on_change_on_replacing_object
+    pirate = Pirate.create!(catchphrase: "Don' botharrr talkin' like one, savvy?")
+    ship = pirate.build_ship(name: 'old name')
+    ship.save!
+
+    new_ship = Ship.create(name: 'new name')
+    assert_queries(2) do
+      # One query for updating name and second query for updating pirate_id
+      pirate.ship = new_ship
+    end
+
+    assert_equal 'new name', pirate.ship.reload.name
+  end
+
+  def test_has_one_autosave_with_primary_key_manually_set
+    post = Post.create(id: 1234, title: "Some title", body: 'Some content')
+    author = Author.new(id: 33, name: 'Hank Moody')
+
+    author.post = post
+    author.save
+    author.reload
+
+    assert_not_nil author.post
+    assert_equal author.post, post
+  end
+
+  def test_has_one_relationship_cannot_have_a_counter_cache
+    assert_raise(ArgumentError) do
+      Class.new(ActiveRecord::Base) do
+        has_one :thing, counter_cache: true
+      end
+    end
+  end
+
+  test 'dangerous association name raises ArgumentError' do
+    [:errors, 'errors', :save, 'save'].each do |name|
+      assert_raises(ArgumentError, "Association #{name} should not be allowed") do
+        Class.new(ActiveRecord::Base) do
+          has_one name
+        end
+      end
+    end
   end
 end

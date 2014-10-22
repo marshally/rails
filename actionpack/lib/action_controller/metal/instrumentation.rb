@@ -11,15 +11,16 @@ module ActionController
     extend ActiveSupport::Concern
 
     include AbstractController::Logger
+    include ActionController::RackDelegation
 
     attr_internal :view_runtime
 
-    def process_action(action, *args)
+    def process_action(*args)
       raw_payload = {
         :controller => self.class.name,
         :action     => self.action_name,
         :params     => request.filtered_parameters,
-        :formats    => request.formats.map(&:to_sym),
+        :format     => request.format.try(:ref),
         :method     => request.method,
         :path       => (request.fullpath rescue "unknown")
       }
@@ -58,13 +59,18 @@ module ActionController
     def redirect_to(*args)
       ActiveSupport::Notifications.instrument("redirect_to.action_controller") do |payload|
         result = super
-        payload[:status]   = self.status
-        payload[:location] = self.location
+        payload[:status]   = response.status
+        payload[:location] = response.filtered_location
         result
       end
     end
 
-  protected
+  private
+
+    # A hook invoked every time a before callback is halted.
+    def halted_callback_hook(filter)
+      ActiveSupport::Notifications.instrument("halted_callback.action_controller", :filter => filter)
+    end
 
     # A hook which allows you to clean up any time taken into account in
     # views wrongly, like database querying time.
@@ -78,7 +84,7 @@ module ActionController
       yield
     end
 
-    # Everytime after an action is processed, this method is invoked
+    # Every time after an action is processed, this method is invoked
     # with the payload, so you can add more information.
     # :api: plugin
     def append_info_to_payload(payload) #:nodoc:

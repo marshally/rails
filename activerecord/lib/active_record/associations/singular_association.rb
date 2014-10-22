@@ -12,42 +12,72 @@ module ActiveRecord
         target
       end
 
-      # Implements the writer method, e.g. foo.items= for Foo.has_many :items
+      # Implements the writer method, e.g. foo.bar= for Foo.belongs_to :bar
       def writer(record)
         replace(record)
       end
 
-      def create(attributes = {})
-        new_record(:create, attributes)
+      def create(attributes = {}, &block)
+        _create_record(attributes, &block)
       end
 
-      def create!(attributes = {})
-        build(attributes).tap { |record| record.save! }
+      def create!(attributes = {}, &block)
+        _create_record(attributes, true, &block)
       end
 
       def build(attributes = {})
-        new_record(:build, attributes)
+        record = build_record(attributes)
+        yield(record) if block_given?
+        set_new_record(record)
+        record
       end
 
       private
 
-        def find_target
-          scoped.first.tap { |record| set_inverse_instance(record) }
+        def create_scope
+          scope.scope_for_create.stringify_keys.except(klass.primary_key)
         end
 
-        # Implemented by subclasses
+        def get_records
+          if reflection.scope_chain.any?(&:any?) ||
+              scope.eager_loading? ||
+              klass.current_scope
+
+            return scope.limit(1).to_a
+          end
+
+          conn = klass.connection
+          sc = reflection.association_scope_cache(conn, owner) do
+            StatementCache.create(conn) { |params|
+              as = AssociationScope.create { params.bind }
+              target_scope.merge(as.scope(self, conn)).limit(1)
+            }
+          end
+
+          binds = AssociationScope.get_bind_values(owner, reflection.chain)
+          sc.execute binds, klass, klass.connection
+        end
+
+        def find_target
+          if record = get_records.first
+            set_inverse_instance record
+          end
+        end
+
         def replace(record)
-          raise NotImplementedError
+          raise NotImplementedError, "Subclasses must implement a replace(record) method"
         end
 
         def set_new_record(record)
           replace(record)
         end
 
-        def new_record(method, attributes)
-          attributes = scoped.scope_for_create.merge(attributes || {})
-          record = reflection.send("#{method}_association", attributes)
+        def _create_record(attributes, raise_error = false)
+          record = build_record(attributes)
+          yield(record) if block_given?
+          saved = record.save
           set_new_record(record)
+          raise RecordInvalid.new(record) if !saved && raise_error
           record
         end
     end

@@ -8,17 +8,20 @@ module ActionDispatch
       new
     end
 
-    # TODO: Finally deal with the RAILS_CACHE global
-    def initialize(store = RAILS_CACHE)
+    def initialize(store = Rails.cache)
       @store = store
     end
 
     def read(key)
-      @store.read(key) || []
+      if data = @store.read(key)
+        Marshal.load(data)
+      else
+        []
+      end
     end
 
     def write(key, value)
-      @store.write(key, value)
+      @store.write(key, Marshal.dump(value))
     end
 
     ::Rack::Cache::MetaStore::RAILS = self
@@ -29,7 +32,7 @@ module ActionDispatch
       new
     end
 
-    def initialize(store = RAILS_CACHE)
+    def initialize(store = Rails.cache)
       @store = store
     end
 

@@ -2,9 +2,11 @@ require 'abstract_unit'
 
 class HttpBasicAuthenticationTest < ActionController::TestCase
   class DummyController < ActionController::Base
-    before_filter :authenticate, :only => :index
-    before_filter :authenticate_with_request, :only => :display
-    before_filter :authenticate_long_credentials, :only => :show
+    before_action :authenticate, only: :index
+    before_action :authenticate_with_request, only: :display
+    before_action :authenticate_long_credentials, only: :show
+
+    http_basic_authenticate_with :name => "David", :password => "Goliath", :only => :search
 
     def index
       render :text => "Hello Secret"
@@ -16,6 +18,10 @@ class HttpBasicAuthenticationTest < ActionController::TestCase
 
     def show
       render :text => 'Only for loooooong credentials'
+    end
+
+    def search
+      render :text => 'All inline'
     end
 
     private
@@ -79,6 +85,14 @@ class HttpBasicAuthenticationTest < ActionController::TestCase
     end
   end
 
+  def test_encode_credentials_has_no_newline
+    username = 'laskjdfhalksdjfhalkjdsfhalksdjfhklsdjhalksdjfhalksdjfhlakdsjfh'
+    password = 'kjfhueyt9485osdfasdkljfh4lkjhakldjfhalkdsjf'
+    result = ActionController::HttpAuthentication::Basic.encode_credentials(
+      username, password)
+    assert_no_match(/\n/, result)
+  end
+
   test "authentication request without credential" do
     get :display
 
@@ -105,9 +119,26 @@ class HttpBasicAuthenticationTest < ActionController::TestCase
     assert_equal 'Definitely Maybe', @response.body
   end
 
+  test "authenticate with class method" do
+    @request.env['HTTP_AUTHORIZATION'] = encode_credentials('David', 'Goliath')
+    get :search
+    assert_response :success
+
+    @request.env['HTTP_AUTHORIZATION'] = encode_credentials('David', 'WRONG!')
+    get :search
+    assert_response :unauthorized
+  end
+
+  test "authentication request with wrong scheme" do
+    header = 'Bearer ' + encode_credentials('David', 'Goliath').split(' ', 2)[1]
+    @request.env['HTTP_AUTHORIZATION'] = header
+    get :search
+    assert_response :unauthorized
+  end
+
   private
 
   def encode_credentials(username, password)
-    "Basic #{ActiveSupport::Base64.encode64("#{username}:#{password}")}"
+    "Basic #{::Base64.encode64("#{username}:#{password}")}"
   end
 end

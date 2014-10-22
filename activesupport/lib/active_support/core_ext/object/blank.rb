@@ -1,75 +1,130 @@
+# encoding: utf-8
+
 class Object
   # An object is blank if it's false, empty, or a whitespace string.
-  # For example, "", "   ", +nil+, [], and {} are blank.
+  # For example, '', '   ', +nil+, [], and {} are all blank.
   #
-  # This simplifies:
+  # This simplifies
   #
-  #   if !address.nil? && !address.empty?
+  #   address.nil? || address.empty?
   #
-  # ...to:
+  # to
   #
-  #   if !address.blank?
+  #   address.blank?
+  #
+  # @return [true, false]
   def blank?
-    respond_to?(:empty?) ? empty? : !self
+    respond_to?(:empty?) ? !!empty? : !self
   end
 
   # An object is present if it's not blank.
+  #
+  # @return [true, false]
   def present?
     !blank?
   end
 
-  # Returns object if it's #present? otherwise returns nil.
-  # object.presence is equivalent to object.present? ? object : nil.
+  # Returns the receiver if it's present otherwise returns +nil+.
+  # <tt>object.presence</tt> is equivalent to
   #
-  # This is handy for any representation of objects where blank is the same
-  # as not present at all.  For example, this simplifies a common check for
-  # HTTP POST/query parameters:
+  #    object.present? ? object : nil
+  #
+  # For example, something like
   #
   #   state   = params[:state]   if params[:state].present?
   #   country = params[:country] if params[:country].present?
   #   region  = state || country || 'US'
   #
-  # ...becomes:
+  # becomes
   #
   #   region = params[:state].presence || params[:country].presence || 'US'
+  #
+  # @return [Object]
   def presence
     self if present?
   end
 end
 
-class NilClass #:nodoc:
+class NilClass
+  # +nil+ is blank:
+  #
+  #   nil.blank? # => true
+  #
+  # @return [true]
   def blank?
     true
   end
 end
 
-class FalseClass #:nodoc:
+class FalseClass
+  # +false+ is blank:
+  #
+  #   false.blank? # => true
+  #
+  # @return [true]
   def blank?
     true
   end
 end
 
-class TrueClass #:nodoc:
+class TrueClass
+  # +true+ is not blank:
+  #
+  #   true.blank? # => false
+  #
+  # @return [false]
   def blank?
     false
   end
 end
 
-class Array #:nodoc:
+class Array
+  # An array is blank if it's empty:
+  #
+  #   [].blank?      # => true
+  #   [1,2,3].blank? # => false
+  #
+  # @return [true, false]
   alias_method :blank?, :empty?
 end
 
-class Hash #:nodoc:
+class Hash
+  # A hash is blank if it's empty:
+  #
+  #   {}.blank?                # => true
+  #   { key: 'value' }.blank?  # => false
+  #
+  # @return [true, false]
   alias_method :blank?, :empty?
 end
 
-class String #:nodoc:
+class String
+  BLANK_RE = /\A[[:space:]]*\z/
+
+  # A string is blank if it's empty or contains whitespaces only:
+  #
+  #   ''.blank?       # => true
+  #   '   '.blank?    # => true
+  #   "\t\n\r".blank? # => true
+  #   ' blah '.blank? # => false
+  #
+  # Unicode whitespace is supported:
+  #
+  #   "\u00a0".blank? # => true
+  #
+  # @return [true, false]
   def blank?
-    self !~ /\S/
+    BLANK_RE === self
   end
 end
 
 class Numeric #:nodoc:
+  # No number is blank:
+  #
+  #   1.blank? # => false
+  #   0.blank? # => false
+  #
+  # @return [false]
   def blank?
     false
   end

@@ -1,14 +1,16 @@
+require 'active_support/core_ext/module/introspection'
 require 'rails/generators/base'
 require 'rails/generators/generated_attribute'
 
 module Rails
   module Generators
     class NamedBase < Base
-      argument :name, :type => :string
-      class_option :skip_namespace, :type => :boolean, :default => false,
-                                    :desc => "Skip namespace (affects only isolated applications)"
+      argument :name, type: :string
+      class_option :skip_namespace, type: :boolean, default: false,
+                                    desc: "Skip namespace (affects only isolated applications)"
 
       def initialize(args, *options) #:nodoc:
+        @inside_template = nil
         # Unfreeze name in case it's given as a frozen string
         args[0] = args[0].dup if args[0].is_a?(String) && args[0].frozen?
         super
@@ -16,6 +18,8 @@ module Rails
         parse_attributes! if respond_to?(:attributes)
       end
 
+      # Defines the template that would be used for the migration file.
+      # The arguments include the source template file, the migration filename etc.
       no_tasks do
         def template(source, *args, &block)
           inside_template do
@@ -26,7 +30,12 @@ module Rails
 
       protected
         attr_reader :file_name
-        alias :singular_name :file_name
+
+        # FIXME: We are avoiding to use alias because a bug on thor that make
+        # this method public and add it to the task list.
+        def singular_name
+          file_name
+        end
 
         # Wrap block with namespace of current application
         # if namespace exists and is not skipped
@@ -38,7 +47,7 @@ module Rails
 
         def indent(content, multiplier = 2)
           spaces = " " * multiplier
-          content = content.each_line.map {|line| "#{spaces}#{line}" }.join
+          content.each_line.map {|line| line.blank? ? line : "#{spaces}#{line}" }.join
         end
 
         def wrap_with_namespace(content)
@@ -58,9 +67,7 @@ module Rails
         end
 
         def namespace
-          @namespace ||= if defined?(Rails) && Rails.application
-            Rails.application.class.parents.detect { |n| n.respond_to?(:_railtie) }
-          end
+          Rails::Generators.namespace
         end
 
         def namespaced?
@@ -79,11 +86,16 @@ module Rails
           @class_path
         end
 
+        def namespaced_file_path
+          @namespaced_file_path ||= namespaced_class_path.join("/")
+        end
+
         def namespaced_class_path
-          @namespaced_class_path ||= begin
-            namespace_path = namespace.name.split("::").map {|m| m.underscore }
-            namespace_path + @class_path
-          end
+          @namespaced_class_path ||= [namespaced_path] + @class_path
+        end
+
+        def namespaced_path
+          @namespaced_path ||= namespace.name.split("::").first.underscore
         end
 
         def class_name
@@ -99,7 +111,7 @@ module Rails
         end
 
         def i18n_scope
-          @i18n_scope ||= file_path.gsub('/', '.')
+          @i18n_scope ||= file_path.tr('/', '.')
         end
 
         def table_name
@@ -130,7 +142,7 @@ module Rails
         end
 
         def route_url
-          @route_url ||= class_path.collect{|dname| "/" + dname  }.join('') + "/" + plural_file_name
+          @route_url ||= class_path.collect {|dname| "/" + dname }.join + "/" + plural_file_name
         end
 
         # Tries to retrieve the application name or simple return application.
@@ -150,9 +162,16 @@ module Rails
 
         # Convert attributes array into GeneratedAttribute objects.
         def parse_attributes! #:nodoc:
-          self.attributes = (attributes || []).map do |key_value|
-            name, type = key_value.split(':')
-            Rails::Generators::GeneratedAttribute.new(name, type)
+          self.attributes = (attributes || []).map do |attr|
+            Rails::Generators::GeneratedAttribute.parse(attr)
+          end
+        end
+
+        def attributes_names
+          @attributes_names ||= attributes.each_with_object([]) do |a, names|
+            names << a.column_name
+            names << 'password_confirmation' if a.password_digest?
+            names << "#{a.name}_type" if a.polymorphic?
           end
         end
 
@@ -165,10 +184,10 @@ module Rails
         #
         # ==== Examples
         #
-        #   check_class_collision :suffix => "Observer"
+        #   check_class_collision suffix: "Decorator"
         #
         # If the generator is invoked with class name Admin, it will check for
-        # the presence of "AdminObserver".
+        # the presence of "AdminDecorator".
         #
         def self.check_class_collision(options={})
           define_method :check_class_collision do

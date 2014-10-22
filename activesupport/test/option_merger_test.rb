@@ -1,7 +1,7 @@
 require 'abstract_unit'
 require 'active_support/core_ext/object/with_options'
 
-class OptionMergerTest < Test::Unit::TestCase
+class OptionMergerTest < ActiveSupport::TestCase
   def setup
     @options = {:hello => 'world'}
   end
@@ -66,17 +66,26 @@ class OptionMergerTest < Test::Unit::TestCase
     end
   end
 
-  def test_nested_method_with_options_using_lamdba
-    local_lamdba = lambda { { :lambda => true } }
+  def test_nested_method_with_options_using_lambda
+    local_lambda = lambda { { :lambda => true } }
     with_options(@options) do |o|
-      assert_equal @options.merge(local_lamdba.call),
-        o.method_with_options(local_lamdba).call
+      assert_equal @options.merge(local_lambda.call),
+        o.method_with_options(local_lambda).call
     end
   end
 
   # Needed when counting objects with the ObjectSpace
   def test_option_merger_class_method
     assert_equal ActiveSupport::OptionMerger, ActiveSupport::OptionMerger.new('', '').class
+  end
+
+  def test_option_merger_implicit_receiver
+    @options.with_options foo: "bar" do
+      merge! fizz: "buzz"
+    end
+
+    expected = { hello: "world", foo: "bar", fizz: "buzz" }
+    assert_equal expected, @options
   end
 
   private

@@ -1,5 +1,4 @@
 require 'rails/generators'
-Rails::Generators.configure!
 
 if [nil, "-h", "--help"].include?(ARGV.first)
   Rails::Generators.help 'generate'
@@ -7,4 +6,6 @@ if [nil, "-h", "--help"].include?(ARGV.first)
 end
 
 name = ARGV.shift
-Rails::Generators.invoke name, ARGV, :behavior => :invoke, :destination_root => Rails.root
+
+root = defined?(ENGINE_ROOT) ? ENGINE_ROOT : Rails.root
+Rails::Generators.invoke name, ARGV, behavior: :invoke, destination_root: root

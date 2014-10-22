@@ -22,17 +22,6 @@ module Rails
       rescue Exception
       end
 
-      def frameworks
-        %w( active_record action_pack active_resource action_mailer active_support )
-      end
-
-      def framework_version(framework)
-        if Object.const_defined?(framework.classify)
-          require "#{framework}/version"
-          "#{framework.classify}::VERSION::STRING".constantize
-        end
-      end
-
       def to_s
         column_width = properties.names.map {|name| name.length}.max
         info = properties.map do |name, value|
@@ -46,7 +35,7 @@ module Rails
       alias inspect to_s
 
       def to_html
-        (table = '<table>').tap do
+        '<table>'.tap do |table|
           properties.each do |(name, value)|
             table << %(<tr><td class="name">#{CGI.escapeHTML(name.to_s)}</td>)
             formatted_value = if value.kind_of?(Array)
@@ -61,8 +50,15 @@ module Rails
       end
     end
 
-    # The Ruby version and platform, e.g. "1.8.2 (powerpc-darwin8.2.0)".
-    property 'Ruby version', "#{RUBY_VERSION} (#{RUBY_PLATFORM})"
+    # The Rails version.
+    property 'Rails version' do
+      Rails.version.to_s
+    end
+
+    # The Ruby version and platform, e.g. "2.0.0-p247 (x86_64-darwin12.4.0)".
+    property 'Ruby version' do
+      "#{RUBY_VERSION}-p#{RUBY_PATCHLEVEL} (#{RUBY_PLATFORM})"
+    end
 
     # The RubyGems version, if it's installed.
     property 'RubyGems version' do
@@ -73,17 +69,8 @@ module Rails
       ::Rack.release
     end
 
-    # The Rails version.
-    property 'Rails version' do
-      Rails::VERSION::STRING
-    end
-
-    # Versions of each Rails framework (Active Record, Action Pack,
-    # Active Resource, Action Mailer, and Active Support).
-    frameworks.each do |framework|
-      property "#{framework.titlecase} version" do
-        framework_version(framework)
-      end
+    property 'JavaScript Runtime' do
+      ExecJS.runtime.name
     end
 
     property 'Middleware' do

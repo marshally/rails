@@ -1,31 +1,46 @@
-source 'http://rubygems.org'
+source 'https://rubygems.org'
 
-<%= rails_gemfile_entry -%>
+<% gemfile_entries.each do |gem| -%>
+<% if gem.comment -%>
 
-<%= database_gemfile_entry -%>
+# <%= gem.comment %>
+<% end -%>
+<%= gem.commented_out ? '# ' : '' %>gem '<%= gem.name %>'<%= %(, '#{gem.version}') if gem.version -%>
+<% if gem.options.any? -%>
+, <%= gem.options.map { |k,v|
+  "#{k}: #{v.inspect}" }.join(', ') %>
+<% end -%>
+<% end -%>
 
-# Use unicorn as the web server
+# Use ActiveModel has_secure_password
+# gem 'bcrypt', '~> 3.1.7'
+
+# Use Unicorn as the app server
 # gem 'unicorn'
 
-# Deploy with Capistrano
-# gem 'capistrano'
+# Use Capistrano for deployment
+# gem 'capistrano-rails', group: :development
 
-# To use debugger (ruby-debug for Ruby 1.8.7+, ruby-debug19 for Ruby 1.9.2+)
-# gem 'ruby-debug'
-# gem 'ruby-debug19', :require => 'ruby-debug'
+group :development, :test do
+<% unless defined?(JRUBY_VERSION) -%>
+  <%- if RUBY_VERSION < '2.0.0' -%>
+  # Call 'debugger' anywhere in the code to stop execution and get a debugger console
+  gem 'debugger'
+  <%- else -%>
+  # Call 'byebug' anywhere in the code to stop execution and get a debugger console
+  gem 'byebug'
+  <%- end -%>
 
-# Bundle the extra gems:
-# gem 'bj'
-# gem 'nokogiri'
-# gem 'sqlite3'
-# gem 'rack-bug', :require => 'rack/bug'
+  # Access an IRB console on exception pages or by using <%%= console %> in views
+  gem 'web-console', '~> 2.0.0.beta4'
+<%- if spring_install? %>
+  # Spring speeds up development by keeping your application running in the background. Read more: https://github.com/rails/spring
+  gem 'spring'
+<% end -%>
+<% end -%>
+end
 
-# Bundle gems for the local environment. Make sure to
-# put test-only gems in this group so their generators
-# and rake tasks are available in development mode:
-# group :development, :test do
-#   gem 'webrat'
-# end
-
-# Needed for guides generation
-# gem "RedCloth", "~> 4.2"
+<% if RUBY_PLATFORM.match(/bccwin|cygwin|emx|mingw|mswin|wince/) -%>
+# Windows does not include zoneinfo files, so bundle the tzinfo-data gem
+gem 'tzinfo-data', platforms: [:mingw, :mswin, :x64_mingw]
+<% end -%>

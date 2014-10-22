@@ -1,6 +1,4 @@
-$VERBOSE = nil
-
-# Load Rails rakefile extensions
+# Load Rails Rakefile extensions
 %w(
   annotations
   documentation
@@ -11,7 +9,6 @@ $VERBOSE = nil
   routes
   statistics
   tmp
-  railties
 ).each do |task|
   load "rails/tasks/#{task}.rake"
 end

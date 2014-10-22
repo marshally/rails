@@ -4,7 +4,7 @@ require "active_support/dependencies"
 module ActionDispatch
   class MiddlewareStack
     class Middleware
-      attr_reader :args, :block
+      attr_reader :args, :block, :name, :classcache
 
       def initialize(klass_or_name, *args, &block)
         @klass = nil
@@ -16,11 +16,12 @@ module ActionDispatch
           @name  = klass_or_name.to_s
         end
 
+        @classcache = ActiveSupport::Dependencies::Reference
         @args, @block = args, block
       end
 
       def klass
-        @klass ||= ActiveSupport::Inflector.constantize(@name)
+        @klass || classcache[@name]
       end
 
       def ==(middleware)
@@ -74,6 +75,11 @@ module ActionDispatch
       middlewares[i]
     end
 
+    def unshift(*args, &block)
+      middleware = self.class::Middleware.new(*args, &block)
+      middlewares.unshift(middleware)
+    end
+
     def initialize_copy(other)
       self.middlewares = other.middlewares.dup
     end
@@ -92,8 +98,9 @@ module ActionDispatch
     end
 
     def swap(target, *args, &block)
-      insert_before(target, *args, &block)
-      delete(target)
+      index = assert_index(target, :before)
+      insert(index, *args, &block)
+      middlewares.delete_at(index + 1)
     end
 
     def delete(target)
@@ -108,7 +115,7 @@ module ActionDispatch
     def build(app = nil, &block)
       app ||= block
       raise "MiddlewareStack#build requires an app" unless app
-      middlewares.reverse.inject(app) { |a, e| e.build(a) }
+      middlewares.freeze.reverse.inject(app) { |a, e| e.build(a) }
     end
 
   protected

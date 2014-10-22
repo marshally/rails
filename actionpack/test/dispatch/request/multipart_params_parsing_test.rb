@@ -1,13 +1,19 @@
+# encoding: utf-8
 require 'abstract_unit'
 
 class MultipartParamsParsingTest < ActionDispatch::IntegrationTest
   class TestController < ActionController::Base
     class << self
-      attr_accessor :last_request_parameters
+      attr_accessor :last_request_parameters, :last_parameters
     end
 
     def parse
-      self.class.last_request_parameters = request.request_parameters
+      self.class.last_request_parameters = begin
+        request.request_parameters
+      rescue EOFError
+        {}
+      end
+      self.class.last_parameters = request.parameters
       head :ok
     end
 
@@ -28,6 +34,23 @@ class MultipartParamsParsingTest < ActionDispatch::IntegrationTest
 
   test "parses bracketed parameters" do
     assert_equal({ 'foo' => { 'baz' => 'bar'}}, parse_multipart('bracketed_param'))
+  end
+
+  test "parse single utf8 parameter" do
+    assert_equal({ 'Iñtërnâtiônàlizætiøn_name' => 'Iñtërnâtiônàlizætiøn_value'}, 
+                 parse_multipart('single_utf8_param'), "request.request_parameters")
+    assert_equal(
+      'Iñtërnâtiônàlizætiøn_value',
+      TestController.last_parameters['Iñtërnâtiônàlizætiøn_name'], "request.parameters")
+  end
+
+  test "parse bracketed utf8 parameter" do
+    assert_equal({ 'Iñtërnâtiônàlizætiøn_name' => { 
+      'Iñtërnâtiônàlizætiøn_nested_name' => 'Iñtërnâtiônàlizætiøn_value'} }, 
+      parse_multipart('bracketed_utf8_param'), "request.request_parameters")
+    assert_equal(
+      {'Iñtërnâtiônàlizætiøn_nested_name' => 'Iñtërnâtiônàlizætiøn_value'},
+      TestController.last_parameters['Iñtërnâtiônàlizætiøn_name'], "request.parameters")
   end
 
   test "parses text file" do
@@ -82,21 +105,14 @@ class MultipartParamsParsingTest < ActionDispatch::IntegrationTest
     assert_equal 19512, file.size
   end
 
-  # Pending fix in Rack 1.2.2
-  # http://rack.lighthouseapp.com/projects/22435-rack/tickets/79-multipart-handling-incorrectly-assuming-file-upload
   test "parses mixed files" do
-    if Rack.release <= '1.2.1'
-      $stderr.puts 'multipart/mixed parsing pending fix in Rack 1.2.2'
-    else
-      params = parse_multipart('mixed_files')
-      assert_equal %w(files foo), params.keys.sort
-      assert_equal 'bar', params['foo']
+    params = parse_multipart('mixed_files')
+    assert_equal %w(files foo), params.keys.sort
+    assert_equal 'bar', params['foo']
 
-      # Rack doesn't handle multipart/mixed for us.
-      files = params['files']
-      files.force_encoding('ASCII-8BIT') if files.respond_to?(:force_encoding)
-      assert_equal 19756, files.size
-    end
+    # Rack doesn't handle multipart/mixed for us.
+    files = params['files']
+    assert_equal 19756, files.bytesize
   end
 
   test "does not create tempfile if no file has been selected" do
@@ -129,6 +145,18 @@ class MultipartParamsParsingTest < ActionDispatch::IntegrationTest
     end
   end
 
+  # This can happen in Internet Explorer when redirecting after multipart form submit.
+  test "does not raise EOFError on GET request with multipart content-type" do
+    with_routing do |set|
+      set.draw do
+        get ':action', controller: 'multipart_params_parsing_test/test'
+      end
+      headers = { "CONTENT_TYPE" => "multipart/form-data; boundary=AaB03x" }
+      get "/parse", {}, headers
+      assert_response :ok
+    end
+  end
+
   private
     def fixture(name)
       File.open(File.join(FIXTURE_PATH, name), 'rb') do |file|
@@ -150,7 +178,7 @@ class MultipartParamsParsingTest < ActionDispatch::IntegrationTest
     def with_test_routing
       with_routing do |set|
         set.draw do
-          match ':action', :to => 'multipart_params_parsing_test/test'
+          post ':action', :controller => 'multipart_params_parsing_test/test'
         end
         yield
       end
